@@ -1,9 +1,7 @@
-require_relative 'base_parser'
+require_relative 'google_old_parser'
 
 module Parsers
-  class GoogleParser < BaseParser
-    BASE_URL = 'https://www.google.com'.freeze
-
+  class GoogleParser < GoogleOldParser
     def results
       {
         'artworks' => extract_artworks.map { |artwork| parse_artwork(artwork) }
@@ -13,49 +11,42 @@ module Parsers
     private
 
     def extract_artworks
-      document.css('g-scrolling-carousel')
-        .at('div')
-        .at('div')
+      document.at('g-loading-icon')
+        .parent
+        .children[1]
         .children
     end
 
     def parse_artwork(artwork)
       parsed_artwork = {
-        'name' => artwork.css('span').text,
-        'link' => "#{BASE_URL}#{artwork.at('a').attr('href')}",
-        'image' => find_artwork_image_data(artwork),
+        'name' => artwork.at('div').xpath('div[1]').text,
+        'link' => "#{GoogleOldParser::BASE_URL}#{artwork.at('a').attr('href')}",
+        'image' => find_artwork_image_data(artwork.at('img').attr('id')),
       }
 
-      extensions = artwork.at('a').xpath('div[2]/div[2]')&.children.map(&:text)
-      parsed_artwork['extensions'] = extensions if extensions.any?
+      extensions = artwork.at('div').xpath('div[2]').text
+      parsed_artwork['extensions'] = [extensions] if extensions&.size > 0
 
       parsed_artwork
     end
 
-    def find_artwork_image_data(artwork)
-      artwork_image = document_image_map.find { |image| artwork.at('img').attr('id') == image[:id] }
-      artwork_image[:image] if artwork_image
+    def find_artwork_image_data(img_id)
+      script = image_replacement_script(img_id)
+      return unless script
+
+      token = script.content.split("var s='")[1]
+      token.split("';var ii")[0].gsub('\\', '')
     end
 
-    def document_image_map
-      return @document_image_map if @document_image_map
-      
-      tokens = image_replacement_script.content.split("var s='")
-      tokens.shift
-      @document_image_map = tokens.map { |token| parse_image_token(token) }
-    end
+    def image_replacement_script(img_id)
+      if @image_replacement_scripts.nil?
+        scripts = document.css('script')
+        @image_replacement_scripts = scripts.select { |script| script.text.include?('_setImagesSrc') }
+      end
 
-    def parse_image_token(token)
-      image, rest = token.split("';var ii=['")
-      id = rest.split("'];")[0]
-      { id: id, image: image.gsub('\\', '') }
-    end
+      return unless img_id
 
-    def image_replacement_script
-      return @image_replacement_script if @image_replacement_script
-      
-      scripts = document.css('script')
-      @image_replacement_script = scripts.find { |script| script.text.include?('_setImagesSrc') }
+      @image_replacement_scripts.find { |script| script.content.include?(img_id) }
     end
   end
 end
